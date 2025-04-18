@@ -1,70 +1,72 @@
 "use client";
-import React from "react";
+
+import React, { useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Text, Billboard, Stars } from "@react-three/drei";
-import { useMemo, useRef } from "react";
+import { OrbitControls, Html, Stars } from "@react-three/drei";
 import * as THREE from "three";
-import { Html } from "@react-three/drei";
 
-//npm install three @react-three/fiber @react-three/drei
-
-// Define the Stock interface.
+// Interface for basic stock data
 interface Stock {
   symbol: string;
   marketCap: number;
   change: number;
 }
 
+// Extended stock data with precomputed values
 interface ExtendedStock extends Stock {
   normalizedCap: number;
   baseRadius: number;
 }
 
-// Compute concentric positions (bullseye layout).
+// Compute positions in concentric rings based on market cap
 function computeConcentricPositions(
   stocks: Stock[],
   baseMin: number,
   baseMax: number
 ): { stock: ExtendedStock; position: { x: number; z: number } }[] {
   if (stocks.length === 0) return [];
-  // Sort stocks descending by market cap.
+
+  // Sort stocks by market cap descending
   const sorted = stocks.slice().sort((a, b) => b.marketCap - a.marketCap);
-  const marketCaps = sorted.map((s) => s.marketCap);
-  const minCap = Math.min(...marketCaps);
-  const maxCap = Math.max(...marketCaps);
-  // Compute normalized market cap and base radius.
-  
+  const caps = sorted.map((s) => s.marketCap);
+  const minCap = Math.min(...caps);
+  const maxCap = Math.max(...caps);
+
+  // Compute a normalized cap and a base radius for each stock
   const stocksWithData: ExtendedStock[] = sorted.map((stock) => {
-    const normalizedCap = maxCap !== minCap ? (stock.marketCap - minCap) / (maxCap - minCap) : 0;
+    const normalizedCap = maxCap !== minCap
+      ? (stock.marketCap - minCap) / (maxCap - minCap)
+      : 0;
     const baseRadius = baseMin + normalizedCap * (baseMax - baseMin);
     return { ...stock, normalizedCap, baseRadius };
   });
 
-  // Partition into rings: ring 0 has 1 item, ring r (r>=1) gets 6*r items.
+  // Divide stocks into rings: ring 0 has 1, ring n has 6*n
   const rings: ExtendedStock[][] = [];
-  let index = 0, ringNum = 0;
-  while (index < stocksWithData.length) {
+  let idx = 0;
+  let ringNum = 0;
+  while (idx < stocksWithData.length) {
     const count = ringNum === 0 ? 1 : 6 * ringNum;
-    rings.push(stocksWithData.slice(index, index + count));
-    index += count;
+    rings.push(stocksWithData.slice(idx, idx + count));
+    idx += count;
     ringNum++;
   }
 
-  // Compute the maximum base radius for each ring.
+  // Find max base radius in each ring
   const ringMax = rings.map((ring) => Math.max(...ring.map((s) => s.baseRadius), 0));
 
-  // Compute ring radii.
+  // Compute the radius at which each ring sits
   const ringR: number[] = [0];
   for (let i = 1; i < rings.length; i++) {
     const n = rings[i].length;
-    const candidate1 = ringR[i - 1] + ringMax[i - 1] + ringMax[i];
-    const candidate2 = n > 1 ? ringMax[i] / Math.sin(Math.PI / n) : candidate1;
-    ringR[i] = Math.max(candidate1, candidate2);
+    const prevR = ringR[i - 1] + ringMax[i - 1] + ringMax[i];
+    const angleR = n > 1 ? ringMax[i] / Math.sin(Math.PI / n) : prevR;
+    ringR[i] = Math.max(prevR, angleR);
   }
 
-  // Assign positions.
+  // Assign x,z coordinates for each stock in its ring
   const positions: { stock: ExtendedStock; position: { x: number; z: number } }[] = [];
-  if (rings.length > 0 && rings[0].length > 0) {
+  if (rings[0].length > 0) {
     positions.push({ stock: rings[0][0], position: { x: 0, z: 0 } });
   }
   for (let i = 1; i < rings.length; i++) {
@@ -72,23 +74,29 @@ function computeConcentricPositions(
     const r = ringR[i];
     for (let j = 0; j < n; j++) {
       const theta = (2 * Math.PI * j) / n;
-      positions.push({ stock: rings[i][j], position: { x: r * Math.cos(theta), z: r * Math.sin(theta) } });
+      positions.push({
+        stock: rings[i][j],
+        position: { x: r * Math.cos(theta), z: r * Math.sin(theta) }
+      });
     }
   }
   return positions;
 }
 
+// Component that draws a single mountain representing one stock
 interface MountainProps {
   stock: ExtendedStock;
   position: { x: number; z: number };
 }
 
 function Mountain({ stock, position }: MountainProps) {
+  // Use change percent to set height, positive up, negative flipped
   const scaleFactor = 10;
   const height = Math.abs(stock.change) * scaleFactor;
   const isPositive = stock.change >= 0;
   const color = isPositive ? "#13d62a" : "#ed2424";
 
+  // Create a cone geometry once per stock
   const geometry = useMemo(() => {
     const geo = new THREE.ConeGeometry(stock.baseRadius, height, 4);
     geo.translate(0, height / 2, 0);
@@ -96,19 +104,39 @@ function Mountain({ stock, position }: MountainProps) {
   }, [stock.baseRadius, height]);
 
   return (
-      <>
-        <mesh position={[position.x, 0, position.z]} rotation={isPositive ? [0, 0, 0] : [Math.PI, 0, 0]} geometry={geometry}>
-          <meshStandardMaterial color={color} metalness={0.5} roughness={0.4} emissive={isPositive ? "#000000" : "#ff5555"} emissiveIntensity={0.4} />
-        </mesh>
-        <Html position={[position.x, isPositive ? height + 5 : -height - 5, position.z]}>
-          <div style={{ color: "black", fontSize: "12px", textAlign: "center" }}>
-            {stock.symbol} {stock.change}%
-          </div>
-        </Html>
-      </>
+    <>
+      {/* Mesh for the cone */}
+      <mesh
+        position={[position.x, 0, position.z]}
+        rotation={isPositive ? [0, 0, 0] : [Math.PI, 0, 0]}
+        geometry={geometry}
+      >
+        <meshStandardMaterial
+          color={color}
+          metalness={0.5}
+          roughness={0.4}
+          emissive={isPositive ? "#000000" : "#ff5555"}
+          emissiveIntensity={0.4}
+        />
+      </mesh>
+
+      {/* Label above/below the peak */}
+      <Html
+        position={[
+          position.x,
+          isPositive ? height + 5 : -height - 5,
+          position.z
+        ]}
+      >
+        <div style={{ color: "black", fontSize: "12px", textAlign: "center" }}>
+          {stock.symbol} {stock.change}%
+        </div>
+      </Html>
+    </>
   );
 }
 
+// Component that renders all mountains
 interface MountainChartProps {
   stocks: Stock[];
 }
@@ -116,18 +144,24 @@ interface MountainChartProps {
 function MountainChart({ stocks }: MountainChartProps) {
   const baseMin = 3;
   const baseMax = 10;
+
+  // Compute positions for all stocks
   const positionsData = computeConcentricPositions(stocks, baseMin, baseMax);
 
   return (
-      <>
-        {positionsData.map((data, index) => (
-            <Mountain key={data.stock.symbol + index} stock={data.stock} position={data.position} />
-        ))}
-      </>
+    <>
+      {positionsData.map((item, idx) => (
+        <Mountain
+          key={item.stock.symbol + idx}
+          stock={item.stock}
+          position={item.position}
+        />
+      ))}
+    </>
   );
 }
 
-
+// Group that slowly rotates the scene
 function RotatingGroup({ children }: { children: React.ReactNode }) {
   const groupRef = useRef<THREE.Group>(null!);
   useFrame((state, delta) => {
@@ -136,34 +170,26 @@ function RotatingGroup({ children }: { children: React.ReactNode }) {
   return <group ref={groupRef}>{children}</group>;
 }
 
+// Main component that sets up the 3D canvas
 interface MountainMapProps {
   stocks: Stock[];
 }
 
 const MountainMap: React.FC<MountainMapProps> = ({ stocks }) => {
-  const containerWidth = 900;
-  const containerHeight = 600;
   return (
-    <div
-      style={{
-        width: `${containerWidth}px`,
-        height: `${containerHeight}px`,
-        borderRadius: "60% / 60%", // Oval container with horizontal long axis.
-        // overflow: "hidden",
-        backgroundColor: "transparent",
-      }}
-    >
-      <Canvas
-        shadows={false}
-        camera={{ position: [0, 50, 100], fov: 65 }}
-        style={{ background: "transparent" }}
-      >
+    <div style={{ width: 900, height: 600, borderRadius: '60% / 60%', backgroundColor: 'transparent' }}>
+      <Canvas camera={{ position: [0, 50, 100], fov: 65 }} style={{ background: 'transparent' }}>
+        {/* Basic lighting and background stars */}
         <ambientLight intensity={0.3} />
         <directionalLight position={[0, 100, 50]} intensity={1} />
         <Stars radius={450} depth={50} count={5000} factor={4} saturation={0} fade />
+
+        {/* Rotating group holds the mountains */}
         <RotatingGroup>
           <MountainChart stocks={stocks} />
         </RotatingGroup>
+
+        {/* Controls to orbit around the scene */}
         <OrbitControls />
       </Canvas>
     </div>
