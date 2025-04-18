@@ -1,3 +1,4 @@
+// components/SectorDashboard.tsx
 "use client";
 
 import Image from "next/image";
@@ -8,18 +9,21 @@ import "react-datepicker/dist/react-datepicker.css";
 import SectorAnalysis from "./SectorAnalysis";
 import Treemap from "./TreeMap";
 import Footer from "./Footer";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from "recharts";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
 
+// Props for the dashboard: which sector to display
 interface SectorPageProps {
     sectorName: string;
 }
 
+// Interface for stock data with market cap and percent change
 interface StockWithChange {
     symbol: string;
     marketCap: number;
     change: number;
 }
 
+// Map URL slug to display name
 const sectorMap: Record<string, { name: string }> = {
     "technology": { name: "Information Technology" },
     "energy": { name: "Energy" },
@@ -34,222 +38,214 @@ const sectorMap: Record<string, { name: string }> = {
     "communication-services": { name: "Communication Services" },
 };
 
-
+// Colors for pie chart slices
 const COLORS = ["#FF5733", "#33A1FF", "#33FF57", "#FFD700", "#8B4513", "#807513", "#0F7513"];
 
-export default function SectorDashboard({ sectorName }: SectorPageProps) {
-    
+// Main sector dashboard component
+e**xport default** function SectorDashboard({ sectorName }: SectorPageProps) {
+    // Date picker state
     const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+    // Control date picker visibility
     const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+    // Loading indicator state
     const [loading, setLoading] = useState(true);
+    // Forecasted growth percentage for next quarter
     const [sectorGrowth, setSectorGrowth] = useState<number | null>(null);
+    // List of stocks with market cap and daily change
     const [stocks, setStocks] = useState<StockWithChange[]>([]);
+
+    // Maximum number of items to show individually in charts
     const maxVisible = 20;
+
+    // Sort stocks by market cap descending
     const sortedStocks = [...stocks].sort((a, b) => b.marketCap - a.marketCap);
+    // Top N stocks for detailed display
     const topStocks = sortedStocks.slice(0, maxVisible);
-    const otherValue = sortedStocks
-        .slice(maxVisible)
+    // Aggregate the rest as "Other"
+    const otherValue = sortedStocks.slice(maxVisible)
         .reduce((sum, stock) => sum + stock.marketCap, 0);
-    
-    const pieData = [...topStocks, { symbol: "Other", marketCap: otherValue }]
-        
+    // Pie chart data merges top stocks plus one "Other" slice
+    const pieData = [...topStocks, { symbol: "Other", marketCap: otherValue }];
+
+    // Top movers by absolute percent change
     const topMovers = [...stocks]
-        .filter(stock => stock.change !== null && stock.change !== undefined)
         .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-        .slice(0, maxVisible); 
-    
+        .slice(0, maxVisible);
+
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-    const fetchSectorGrowth = async (): Promise<number | null> => {
+    // Fetch forecasted sector growth
+    async function fetchSectorGrowth(): Promise<number | null> {
         try {
             const url = `${API_BASE_URL}/api/financials/sector-growth?sectorName=${sectorMap[sectorName].name}`;
             const response = await fetch(url);
             if (!response.ok) throw new Error("Failed to fetch sector growth");
-            const growth = await response.json();
-            return growth;
-        } catch (err) {
-            console.error("Error fetching sector growth:", err);
+            return response.json();
+        } catch {
+            console.error("Error fetching sector growth");
             return null;
         }
-    };
+    }
 
-    const fetchTopMarketCapWithChange = async (): Promise<StockWithChange[]> => {
-        const count = 100;
-        
-        let date = selectedDate;
-        
-        if (selectedDate.getDay() === 6 ) {
-            date.setDate(selectedDate.getDate() - 1);
-        } else if (selectedDate.getDay() === 0) {
-            date.setDate(selectedDate.getDate() - 2);
-        }
-        
+    // Fetch top market-cap stocks and their daily change for selected date
+    async function fetchTopMarketCapWithChange(): Promise<StockWithChange[]> {
+        // Ensure we pick a weekday (skip weekends)
+        let date = new Date(selectedDate);
+        if (date.getDay() === 6) date.setDate(date.getDate() - 1);
+        if (date.getDay() === 0) date.setDate(date.getDate() - 2);
+
         try {
-            const url = `${API_BASE_URL}/api/financials/top-marketcap-with-change?count=${count}&sectorName=${sectorMap[sectorName].name}&date=${date.toISOString().split("T")[0]}`;
-            console.log(url);
+            const url = `${API_BASE_URL}/api/financials/top-marketcap-with-change` +
+                `?count=100&sectorName=${sectorMap[sectorName].name}` +
+                `&date=${date.toISOString().split("T")[0]}`;
             const response = await fetch(url);
-            console.log(response);
-            if (!response.ok) {
-                throw new Error("Failed to fetch market cap data");
-            }
-
-            const stocks: StockWithChange[] = await response.json();
-            console.log("Stocks with market cap & change loaded:", stocks);
-            return stocks;
-        } catch (err) {
-            console.error("Error fetching top market cap stocks:", err);
+            if (!response.ok) throw new Error("Failed to fetch market cap data");
+            return response.json();
+        } catch {
+            console.error("Error fetching stocks");
             return [];
         }
-    };
+    }
 
+    // On date change, load stocks and forecast
     useEffect(() => {
-        const load = async () => {
+        async function loadData() {
             setLoading(true);
-            const stocks = await fetchTopMarketCapWithChange();
-            setStocks(stocks);
+            const stocksData = await fetchTopMarketCapWithChange();
+            setStocks(stocksData);
             const growth = await fetchSectorGrowth();
             setSectorGrowth(growth);
             setLoading(false);
-        };
-        if (selectedDate) {
-            console.log("selectedDate", selectedDate);
-            load();
         }
+        loadData();
     }, [selectedDate]);
 
-    // Handle the date change
-    const handleDateChange = (date: Date | null) => {
-        if (date) {
-            setSelectedDate(date);
-            setIsCalendarOpen(false); 
-        }
-    };
+    // Handle new date selection
+    function handleDateChange(date: Date) {
+        setSelectedDate(date);
+        setIsCalendarOpen(false);
+    }
 
-    // Toggle the calendar popup
-    const toggleCalendar = () => {
-        setIsCalendarOpen(!isCalendarOpen);
-    };
+    // Toggle calendar visibility
+    function toggleCalendar() {
+        setIsCalendarOpen(open => !open);
+    }
 
     return (
         <div className="min-h-screen flex flex-col items-center p-8 bg-gray-50">
-            <Link
-                href="/"
-                className="text-lg text-blue-600 font-medium hover:underline mb-6"
-            >
+            {/* Back link to home */}
+            <Link href="/" className="mb-6 text-blue-600 hover:underline">
                 ← Back to Home
             </Link>
 
-            {/* Sector Title */}
-            <h1 className="text-4xl font-semibold text-gray-800 mb-8">{sectorMap[sectorName].name}</h1>
+            {/* Sector title */}
+            <h1 className="text-4xl font-semibold mb-8">
+                {sectorMap[sectorName].name}
+            </h1>
 
-            {/* Date Picker Button */}
+            {/* Date picker control */}
             <div className="mb-8 w-full">
                 <button
                     onClick={toggleCalendar}
-                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition"
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                     Date: {selectedDate.toLocaleDateString()}
                 </button>
-
-                {/* Date Picker Popup */}
                 {isCalendarOpen && (
-                    <div className="mt-4 z-10 absolute top-16 bg-white shadow-lg rounded-lg border p-4">
+                    <div className="absolute mt-2 bg-white p-4 shadow-lg rounded">
                         <DatePicker
                             selected={selectedDate}
-                            onChange={handleDateChange}
+                            onChange={date => date && handleDateChange(date)}
                             inline
-                            dateFormat="MMMM d, yyyy"
                             maxDate={new Date()}
                         />
                     </div>
                 )}
             </div>
-            <div className="mb-8 p-6  shadow-md rounded-lg text-center">
-                <h2 className="text-2xl font-semibold text-black mb-2"> Sector Growth Forecast (Next Quarter)</h2>
-                {sectorGrowth === null ? (
+
+            {/* Sector growth forecast */}
+            <div className="mb-8 p-6 bg-white shadow rounded text-center w-full max-w-md">
+                <h2 className="text-2xl font-semibold mb-2">
+                    Sector Growth Forecast (Next Quarter)
+                </h2>
+                {loading ? (
                     <p className="text-gray-500">Loading forecast...</p>
                 ) : (
-                    <p className={`text-xl font-bold ${sectorGrowth > 0 ? "text-green-600" : sectorGrowth < 0 ? "text-red-500" : "text-gray-500"}`}>
-                        {sectorGrowth > 0 ? "▲" : sectorGrowth < 0 ? "▼" : "–"} {Math.abs(sectorGrowth).toFixed(2)}%
+                    <p className={
+                        `text-xl font-bold ${
+                            sectorGrowth! > 0 ? "text-green-600" : sectorGrowth! < 0 ? "text-red-500" : "text-gray-500"
+                        }`
+                    }>
+                        {sectorGrowth! > 0 ? "▲" : sectorGrowth! < 0 ? "▼" : "–"}
+                        {Math.abs(sectorGrowth!).toFixed(2)}%
                     </p>
                 )}
             </div>
 
-            {/* Heatmap Section */}
-            <div className="w-full flex flex-col items-center">
+            {/* TreeMap heatmap of stocks */}
+            <div className="w-full mb-8">
                 <Treemap stocks={stocks} width={1200} height={800} />
             </div>
 
-            {/* Main Content */}
-            <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-8">
-                
-                {/* Top Movers Section */}
-                <div className="p-6 bg-white shadow-md rounded-lg">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4">Top Movers</h2>
-                    <p className="mb-4 text-gray-500">
-                        (Data will be fetched for {selectedDate ? selectedDate.toDateString() : "the current date"})
+            {/* Top Movers and Market Cap sections side by side */}
+            <div className="w-full grid md:grid-cols-2 gap-8">
+                {/* Top Movers table */}
+                <div className="bg-white p-6 shadow rounded overflow-x-auto">
+                    <h2 className="text-2xl font-semibold mb-4">Top Movers</h2>
+                    <p className="text-gray-500 mb-4">
+                        Data for {selectedDate.toDateString()}
                     </p>
-
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-100">
+                    <table className="min-w-full text-sm">
+                        <thead className="bg-gray-100">
                             <tr>
-                                <th className="px-4 py-2 text-left text-gray-600">Symbol</th>
-                                <th className="px-4 py-2 text-left text-gray-600">Market Cap</th>
-                                <th className="px-4 py-2 text-left text-gray-600">% Change</th>
+                                <th className="px-4 py-2 text-left">Symbol</th>
+                                <th className="px-4 py-2 text-left">Market Cap</th>
+                                <th className="px-4 py-2 text-left">% Change</th>
                             </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                            {topMovers.map((stock) => (
-                                <tr key={stock.symbol}>
-                                    <Link href={`/stock/${stock.symbol}`} className="px-4 py-2 font-medium text-black p-4">
-                                        {stock.symbol}
-                                    </Link>
-                                    <td className="px-4 py-2 text-gray-500">${(stock.marketCap / 1e9).toFixed(2)}B</td>
-                                    <td className={`px-4 py-2 font-semibold ${stock.change >= 0 ? "text-green-600" : "text-red-500"}`}>
+                        </thead>
+                        <tbody>
+                            {topMovers.map(stock => (
+                                <tr key={stock.symbol} className="border-t">
+                                    <td className="px-4 py-2">
+                                        <Link href={`/stock/${stock.symbol}`} className="text-blue-600">
+                                            {stock.symbol}
+                                        </Link>
+                                    </td>
+                                    <td className="px-4 py-2">${(stock.marketCap/1e9).toFixed(2)}B</td>
+                                    <td className={
+                                        `px-4 py-2 font-semibold ${stock.change >= 0 ? "text-green-600" : "text-red-500"}`
+                                    }>
                                         {stock.change.toFixed(2)}%
                                     </td>
                                 </tr>
                             ))}
-                            </tbody>
-                        </table>
-                    </div>
+                        </tbody>
+                    </table>
                 </div>
 
-
-                {/* Top Market Cap Stocks Section */}
-                <div className="p-6 bg-white shadow-md rounded-lg">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4">Top Market Cap Stocks</h2>
-                    {/* Pie Chart for Market Cap */}
-                    <div className="w-full flex justify-center mt-6">
-                        <ResponsiveContainer width={800} height={600}>
-                            <PieChart>
-                                <Pie
-                                    data={pieData}
-                                    cx="50%"
-                                    cy="50%"
-                                    labelLine={true}
-                                    outerRadius={360}
-                                    fill="#8884d8"
-                                    dataKey="marketCap"
-                                    nameKey="symbol"
-                                >
-                                    {pieData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                {/*<Legend />*/}
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
+                {/* Pie chart of top market cap stocks */}
+                <div className="bg-white p-6 shadow rounded flex justify-center">
+                    <ResponsiveContainer width={800} height={600}>
+                        <PieChart>
+                            <Pie
+                                data={pieData}
+                                cx="50%"
+                                cy="50%"
+                                outerRadius={360}
+                                dataKey="marketCap"
+                                nameKey="symbol"
+                            >
+                                {pieData.map((entry, idx) => (
+                                    <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip />
+                        </PieChart>
+                    </ResponsiveContainer>
                 </div>
             </div>
-           
-            <div className="w-max">
-                {/*<SectorAnalysis sectorName={sectorName} />*/}
-            </div>
-            
+
+            {/* Footer component */}
             <Footer />
         </div>
     );
