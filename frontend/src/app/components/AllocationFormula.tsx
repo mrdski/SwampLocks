@@ -1,23 +1,27 @@
 "use client";
 import React, { useState } from "react";
 
+// Calculate weights for each sector based on performance and diversification
 export function optimizePortfolio(
   items: { sector: string; performance: number }[],
   alpha: number
 ): Array<{ sector: string; performance: number; weight: number }> {
   const n = items.length;
+  // If there are no items, return an empty list
   if (n === 0) return [];
 
-  // Edge case: alpha === 1 => maximize performance
+  // If alpha is 1, focus only on performance: pick the best sector fully
   if (alpha === 1) {
     let maxIdx = 0;
     let maxPerf = items[0].performance;
+    // Find the index of the sector with highest performance
     for (let i = 1; i < n; i++) {
       if (items[i].performance > maxPerf) {
         maxPerf = items[i].performance;
         maxIdx = i;
       }
     }
+    // Set weight 1 for the best sector, 0 for others
     return items.map((x, i) => ({
       sector: x.sector,
       performance: x.performance,
@@ -25,44 +29,59 @@ export function optimizePortfolio(
     }));
   }
 
+  // Extract performance values into an array
   const r = items.map((x) => x.performance);
+  // Initialize weights to zero
   let weights = new Array(n).fill(0);
+  // Active list tracks which sectors still need weight adjustment
   let active = Array.from({ length: n }, (_, i) => i);
 
+  // Iteratively solve for weights, removing any negative ones
   while (true) {
     const freeCount = active.length;
+    // Stop if no active sectors
     if (freeCount === 0) break;
 
+    // Sum of performances for active sectors
     const sumR = active.reduce((acc, i) => acc + r[i], 0);
+    // Calculate lambda from alpha and sumR
     const lambda = (alpha * sumR - 2 * (1 - alpha)) / freeCount;
 
     let anyNegative = false;
+    // Compute provisional weights for active sectors
     for (const i of active) {
       const w_i = (alpha * r[i] - lambda) / (2 * (1 - alpha));
       weights[i] = w_i;
       if (w_i < 0) anyNegative = true;
     }
 
+    // If all provisional weights are non-negative, normalize and finish
     if (!anyNegative) {
+      // Sum of provisional weights
       let sumW = 0;
       for (const i of active) sumW += weights[i];
+      // If sumW is zero or negative, distribute evenly
       if (sumW <= 0) {
         for (const i of active) weights[i] = 1 / freeCount;
       } else {
+        // Normalize weights so they sum to 1
         for (const i of active) weights[i] /= sumW;
       }
       break;
     }
 
+    // Remove any sectors with negative weight and repeat
     const newActive: number[] = [];
     for (const i of active) {
       if (weights[i] > 0) newActive.push(i);
       else weights[i] = 0;
     }
+    // If no change in active set, stop to avoid infinite loop
     if (newActive.length === active.length) break;
     active = newActive;
   }
 
+  // Map results back to sectors with their computed weights
   return items.map((x, i) => ({
     sector: x.sector,
     performance: x.performance,
@@ -70,8 +89,9 @@ export function optimizePortfolio(
   }));
 }
 
+// Main component for portfolio optimization UI
 export default function DiversityOptimizer() {
-  // performance data from ml model weighted mean average aggregated ml targets
+  // Example data from a model: sectors with their performance scores
   const [rows] = useState([
     { sector: "Tech", performance: 0.15 },
     { sector: "Healthcare", performance: 0.10 },
@@ -86,7 +106,9 @@ export default function DiversityOptimizer() {
     { sector: "Automotive", performance: 0.07 },
   ]);
 
+  // Alpha controls the balance between performance and diversification
   const [alpha, setAlpha] = useState(0.5);
+  // Compute optimized weights whenever alpha changes
   const optimized = optimizePortfolio(rows, alpha);
 
   return (
