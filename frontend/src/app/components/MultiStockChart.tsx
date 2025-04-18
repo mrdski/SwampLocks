@@ -4,14 +4,14 @@ import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from "recharts";
 
-
+// Initial colors for example tickers
 const initialColors: Record<string, string> = {
   AAPL: "#8884d8",
   GOOGL: "#82ca9d",
   MSFT: "#ff7300",
 };
 
-
+// Utility to generate a random hex color
 function generateRandomColor(): string {
   const letters = "0123456789ABCDEF";
   let color = "#";
@@ -21,6 +21,7 @@ function generateRandomColor(): string {
   return color;
 }
 
+// Available timeframe options
 const timeframes = [
   { label: "Today", value: "1d" },
   { label: "1W", value: "1w" },
@@ -32,29 +33,37 @@ const timeframes = [
   { label: "Max", value: "max" }
 ];
 
-
+// Represent one row of merged date + prices
 interface MergedRow {
   date: string;
   [ticker: string]: string | number;
 }
 
+// Main component for searching and charting multiple stocks
 export default function MultiStockSearchChart() {
+  // Search input state
   const [searchQuery, setSearchQuery] = useState("");
+  // Autocomplete suggestions based on searchQuery
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  // List of tickers chosen by user
   const [selectedTickers, setSelectedTickers] = useState<string[]>([]);
+  // Map of ticker to its display color
   const [tickerColors, setTickerColors] = useState<Record<string, string>>(initialColors);
 
+  // Combined raw data by date and ticker
   const [mergedData, setMergedData] = useState<MergedRow[]>([]);
+  // Data filtered by selected timeframe
   const [filteredData, setFilteredData] = useState<MergedRow[]>([]);
+  // Current timeframe choice
   const [timeframe, setTimeframe] = useState("max");
 
+  // Loading and error states
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-
+  // Fetch autocomplete suggestions when searchQuery changes
   useEffect(() => {
     async function fetchSuggestions() {
       if (!searchQuery) {
@@ -66,380 +75,313 @@ export default function MultiStockSearchChart() {
           `${API_BASE_URL}/api/financials/stocks/autocomplete?query=${searchQuery}`
         );
         setSuggestions(resp.data);
-      } catch (err) {
-        console.error(err);
+      } catch {
         setSuggestions([]);
       }
     }
     fetchSuggestions();
   }, [searchQuery, API_BASE_URL]);
 
-
+  // Handle form submit to add ticker
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     addTicker(searchQuery);
   }
 
+  // Add a ticker to the list, assign a color if new
   async function addTicker(ticker: string) {
     const uppercaseTicker = ticker.toUpperCase().trim();
     if (!uppercaseTicker) return;
     if (selectedTickers.includes(uppercaseTicker)) {
-      // Already in list
       setSearchQuery("");
       setSuggestions([]);
       return;
     }
     setError(null);
-
     if (!tickerColors[uppercaseTicker]) {
-      setTickerColors((prev) => ({
+      setTickerColors(prev => ({
         ...prev,
         [uppercaseTicker]: generateRandomColor()
       }));
     }
-    setSelectedTickers((prev) => [...prev, uppercaseTicker]);
+    setSelectedTickers(prev => [...prev, uppercaseTicker]);
     setSearchQuery("");
     setSuggestions([]);
   }
 
-
+  // Remove a ticker from the list
   function removeTicker(ticker: string) {
-    setSelectedTickers((prev) => prev.filter((t) => t !== ticker));
+    setSelectedTickers(prev => prev.filter(t => t !== ticker));
   }
 
+  // Fetch price data for all selected tickers whenever list changes
   useEffect(() => {
     if (selectedTickers.length === 0) {
       setMergedData([]);
       return;
     }
-
     let cancelled = false;
     async function fetchAll() {
       setLoading(true);
       setError(null);
-
       try {
         const results = await Promise.all(
           selectedTickers.map(async (ticker) => {
+            // Fetch historical filtered data and today's data
             const [respFiltered, respDaily] = await Promise.all([
               axios.get(`${API_BASE_URL}/api/financials/stocks/${ticker}/filtered_data`),
               axios.get(`${API_BASE_URL}/api/financials/stocks/${ticker}/todays_data`),
             ]);
-
+            // Combine and normalize date format
             const combinedPoints = [...respFiltered.data, ...respDaily.data].map((item: any) => ({
-              date: new Date(item.date).toISOString().slice(0, 10), // "YYYY-MM-DD"
+              date: new Date(item.date).toISOString().slice(0, 10),
               price: item.closingPrice
             }));
-
             return { ticker, data: combinedPoints };
           })
         );
 
         if (cancelled) return;
 
+        // Merge data by date into one object
         const dataMap: Record<string, any> = {};
         for (const { ticker, data } of results) {
-          data.forEach((pt) => {
-            const dStr = pt.date;
-            if (!dataMap[dStr]) {
-              dataMap[dStr] = { date: dStr };
-            }
-            dataMap[dStr][ticker] = pt.price;
+          data.forEach(pt => {
+            const d = pt.date;
+            if (!dataMap[d]) dataMap[d] = { date: d };
+            dataMap[d][ticker] = pt.price;
           });
         }
-        const mergedArray = Object.values(dataMap).sort(
-          (a: any, b: any) => (a.date as string).localeCompare(b.date as string)
-        ) as MergedRow[];
-
+        // Convert map to sorted array
+        const mergedArray = Object.values(dataMap).sort((a: any, b: any) => a.date.localeCompare(b.date)) as MergedRow[];
         setMergedData(mergedArray);
-      } catch (err) {
-        console.error(err);
+      } catch {
         if (!cancelled) setError("Error fetching multi-stock data.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-
     fetchAll();
     return () => { cancelled = true; };
   }, [selectedTickers, API_BASE_URL]);
 
-
+  // Filter mergedData by the selected timeframe
   useEffect(() => {
-    function filterByTimeframe(tf: string, dataArray: MergedRow[]): MergedRow[] {
-      if (tf === "max") return dataArray;
+    function filterByTimeframe(tf: string, arr: MergedRow[]): MergedRow[] {
+      if (tf === "max") return arr;
       const now = new Date();
-      let filtered = [...dataArray];
-
-      if (tf === "1d") {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        filtered = filtered.filter((item) => new Date(item.date) >= today);
-      } else if (tf === "1w") {
-        const oneWeekAgo = new Date(now);
-        oneWeekAgo.setDate(now.getDate() - 7);
-        filtered = filtered.filter((item) => new Date(item.date) >= oneWeekAgo);
-      } else if (tf === "1mo") {
-        const oneMonthAgo = new Date(now);
-        oneMonthAgo.setMonth(now.getMonth() - 1);
-        filtered = filtered.filter((item) => new Date(item.date) >= oneMonthAgo);
-      } else if (tf === "6mo") {
-        const sixMonthsAgo = new Date(now);
-        sixMonthsAgo.setMonth(now.getMonth() - 6);
-        filtered = filtered.filter((item) => new Date(item.date) >= sixMonthsAgo);
-      } else if (tf === "1y") {
-        const oneYearAgo = new Date(now);
-        oneYearAgo.setFullYear(now.getFullYear() - 1);
-        filtered = filtered.filter((item) => new Date(item.date) >= oneYearAgo);
-      } else if (tf === "5y") {
-        const fiveYearsAgo = new Date(now);
-        fiveYearsAgo.setFullYear(now.getFullYear() - 5);
-        filtered = filtered.filter((item) => new Date(item.date) >= fiveYearsAgo);
-      } else if (tf === "ytd") {
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        filtered = filtered.filter((item) => new Date(item.date) >= startOfYear);
+      let result = [...arr];
+      switch (tf) {
+        case "1d":
+          const today = new Date(); today.setHours(0,0,0,0);
+          result = result.filter(item => new Date(item.date) >= today);
+          break;
+        case "1w":
+          const weekAgo = new Date(now); weekAgo.setDate(now.getDate() - 7);
+          result = result.filter(item => new Date(item.date) >= weekAgo);
+          break;
+        case "1mo":
+          const moAgo = new Date(now); moAgo.setMonth(now.getMonth() - 1);
+          result = result.filter(item => new Date(item.date) >= moAgo);
+          break;
+        case "6mo":
+          const sixMoAgo = new Date(now); sixMoAgo.setMonth(now.getMonth() - 6);
+          result = result.filter(item => new Date(item.date) >= sixMoAgo);
+          break;
+        case "1y":
+          const yrAgo = new Date(now); yrAgo.setFullYear(now.getFullYear() - 1);
+          result = result.filter(item => new Date(item.date) >= yrAgo);
+          break;
+        case "5y":
+          const fiveYrAgo = new Date(now); fiveYrAgo.setFullYear(now.getFullYear() - 5);
+          result = result.filter(item => new Date(item.date) >= fiveYrAgo);
+          break;
+        case "ytd":
+          const startYear = new Date(now.getFullYear(), 0, 1);
+          result = result.filter(item => new Date(item.date) >= startYear);
+          break;
       }
-
-      return filtered;
+      return result;
     }
-
     setFilteredData(filterByTimeframe(timeframe, mergedData));
   }, [timeframe, mergedData]);
 
-
+  // Standardize prices so first date = 100%
   const standardizedData = useMemo(() => {
-    if (!filteredData.length || selectedTickers.length === 0) return [];
-
-    const firstRow = filteredData[0];
-    const baselines: Record<string, number> = {};
-    selectedTickers.forEach((t) => {
-      const val = firstRow[t];
-      if (typeof val === "number") baselines[t] = val;
+    if (!filteredData.length) return [];
+    const bases: Record<string, number> = {};
+    filteredData[0] && Object.keys(filteredData[0]).forEach(key => {
+      if (key !== 'date') bases[key] = Number(filteredData[0][key]);
     });
-
-    return filteredData.map((row) => {
-      const out: MergedRow = { date: row.date };
-      selectedTickers.forEach((t) => {
-        const rawVal = row[t];
-        if (typeof rawVal === "number" && baselines[t]) {
-          out[t] = (rawVal / baselines[t]) * 100;
-        } else {
-          out[t] = 0;
+    return filteredData.map(row => {
+      const out: any = { date: row.date };
+      Object.keys(row).forEach(key => {
+        if (key !== 'date') {
+          const val = Number(row[key]);
+          out[key] = bases[key] ? (val / bases[key]) * 100 : 0;
         }
       });
       return out;
     });
-  }, [filteredData, selectedTickers]);
+  }, [filteredData]);
 
-
+  // Compute daily returns for correlation
   const returnsData = useMemo(() => {
-    if (filteredData.length < 2 || selectedTickers.length < 1) return [];
-    const result: Array<Record<string, number | string>> = [];
+    if (filteredData.length < 2) return [];
+    const arr: any[] = [];
     for (let i = 1; i < filteredData.length; i++) {
       const prev = filteredData[i - 1];
       const curr = filteredData[i];
       const row: any = { date: curr.date };
-      selectedTickers.forEach((ticker) => {
-        const pVal = prev[ticker];
-        const cVal = curr[ticker];
-        if (typeof pVal === "number" && typeof cVal === "number" && pVal !== 0) {
-          row[ticker] = (cVal - pVal) / pVal;
-        } else {
-          row[ticker] = 0;
+      Object.keys(curr).forEach(key => {
+        if (key !== 'date') {
+          const p = Number(prev[key]);
+          const c = Number(curr[key]);
+          row[key] = p ? (c - p) / p : 0;
         }
       });
-      result.push(row);
+      arr.push(row);
     }
-    return result;
-  }, [filteredData, selectedTickers]);
+    return arr;
+  }, [filteredData]);
 
-  function computeCorrelation(arr1: number[], arr2: number[]): number {
-    const n = arr1.length;
-    if (n === 0) return 0;
-    const mean1 = arr1.reduce((s, v) => s + v, 0) / n;
-    const mean2 = arr2.reduce((s, v) => s + v, 0) / n;
-    let numerator = 0, denom1 = 0, denom2 = 0;
-    for (let i = 0; i < n; i++) {
-      const diff1 = arr1[i] - mean1;
-      const diff2 = arr2[i] - mean2;
-      numerator += diff1 * diff2;
-      denom1 += diff1 * diff1;
-      denom2 += diff2 * diff2;
+  // Correlation helper
+  function computeCorrelation(a: number[], b: number[]): number {
+    const n = a.length;
+    const meanA = a.reduce((s,v) => s+v,0)/n;
+    const meanB = b.reduce((s,v) => s+v,0)/n;
+    let num=0, denA=0, denB=0;
+    for (let i=0; i<n; i++) {
+      const da = a[i] - meanA;
+      const db = b[i] - meanB;
+      num += da*db;
+      denA += da*da;
+      denB += db*db;
     }
-    return denom1 && denom2 ? numerator / Math.sqrt(denom1 * denom2) : 0;
+    return denA && denB ? num/Math.sqrt(denA*denB) : 0;
   }
 
-  const pairwiseCorr: Record<string, number> = useMemo(() => {
-    if (returnsData.length === 0 || selectedTickers.length < 2) return {};
+  // Pairwise correlations between tickers
+  const pairwiseCorr = useMemo(() => {
+    const corr: Record<string, number> = {};
+    if (!returnsData.length) return corr;
+    const tickerList = Object.keys(returnsData[0]).filter(k => k !== 'date');
     const returnsMap: Record<string, number[]> = {};
-    selectedTickers.forEach((t) => { returnsMap[t] = []; });
-    returnsData.forEach((row) => {
-      selectedTickers.forEach((t) => {
-          returnsMap[t].push(Number(row[t]));
-      });
-    });
-
-    const corrObj: Record<string, number> = {};
-    for (let i = 0; i < selectedTickers.length; i++) {
-      for (let j = i + 1; j < selectedTickers.length; j++) {
-        const s1 = selectedTickers[i];
-        const s2 = selectedTickers[j];
-        const [a, b] = s1 < s2 ? [s1, s2] : [s2, s1];
-        const r = computeCorrelation(returnsMap[s1], returnsMap[s2]);
-        corrObj[`${a}-${b}`] = r;
+    tickerList.forEach(t => returnsMap[t] = []);
+    returnsData.forEach(row => tickerList.forEach(t => returnsMap[t].push(Number(row[t]))));
+    for (let i=0; i<tickerList.length; i++) {
+      for (let j=i+1; j<tickerList.length; j++) {
+        const t1 = tickerList[i], t2 = tickerList[j];
+        const key = [t1,t2].sort().join('-');
+        corr[key] = computeCorrelation(returnsMap[t1], returnsMap[t2]);
       }
     }
-    return corrObj;
-  }, [returnsData, selectedTickers]);
+    return corr;
+  }, [returnsData]);
 
+  // Determine Y-axis bounds for chart
+  const allVals = standardizedData.flatMap(row =>
+    Object.keys(row).filter(k => k!=='date').map(k => Number(row[k]))
+  );
+  const yMin = allVals.length ? Math.min(...allVals) : 0;
+  const yMax = allVals.length ? Math.max(...allVals) : 100;
 
-  const allValues = standardizedData.flatMap((row) =>
-    selectedTickers.map((t) => {
-      const v = row[t];
-      return typeof v === "number" ? v : null;
-    })
-  ).filter((x) => x !== null) as number[];
-
-  const yMin = allValues.length ? Math.min(...allValues) : 0;
-  const yMax = allValues.length ? Math.max(...allValues) : 100;
-
-  //
-  // 9) PERCENTAGE CHANGES
-  //
+  // Compute overall % change
   const percentageChanges: Record<string, number> = {};
-  if (standardizedData.length > 1) {
-    const firstRow = standardizedData[0];
-    const lastRow = standardizedData[standardizedData.length - 1];
-    selectedTickers.forEach((ticker) => {
-      const fVal = firstRow[ticker];
-      const lVal = lastRow[ticker];
-      if (typeof fVal === "number" && typeof lVal === "number" && fVal !== 0) {
-        percentageChanges[ticker] = ((lVal - fVal) / fVal) * 100;
-      } else {
-        percentageChanges[ticker] = 0;
-      }
+  if (standardizedData.length) {
+    const first = standardizedData[0], last = standardizedData[standardizedData.length-1];
+    Object.keys(first).filter(k=>'date'!==k).forEach(t => {
+      const v0 = Number(first[t]), v1 = Number(last[t]);
+      percentageChanges[t] = v0 ? ((v1-v0)/v0)*100 : 0;
     });
-  } else {
-    selectedTickers.forEach((t) => { percentageChanges[t] = 0; });
   }
 
   return (
     <div className="w-full flex flex-col gap-4 relative text-black">
-
-      {/* "Info" icon and disclaimer */}
-      <div className="absolute top-0 right-0 mt-2 mr-2 group inline-block text-center cursor-pointer">
-        <span className="font-bold border border-black rounded-full px-2 py-1 bg-gray-100 text-sm text-black">
-          i
-        </span>
-        <div className="absolute hidden group-hover:block bg-white border border-gray-300 rounded p-2 w-60 text-black text-xs right-0 mt-1 z-10">
+      {/* Info icon with disclaimer */}
+      <div className="absolute top-0 right-0 mt-2 mr-2 group inline-block cursor-pointer">
+        <span className="border rounded-full px-2 py-1 bg-gray-100">i</span>
+        <div className="absolute hidden group-hover:block bg-white border rounded p-2 w-60 text-xs right-0 mt-1">
           <p className="font-semibold">Disclaimer</p>
-          <p>
-            This chart is a correlation visualization tool and does NOT reflect real price data.
-          </p>
+          <p>This chart is a correlation tool and does NOT reflect real price data.</p>
         </div>
       </div>
 
-      {/* Search Bar */}
+      {/* Search form */}
       <div className="relative w-full max-w-xl">
-        <form onSubmit={handleSubmit} className="flex items-center bg-gray-100 rounded-md">
+        <form onSubmit={handleSubmit} className="flex bg-gray-100 rounded">
           <input
             type="text"
             placeholder="Enter stock ticker..."
-            className="flex-grow p-2 outline-none rounded-l-md text-black caret-black placeholder-gray-600"
+            className="flex-grow p-2 outline-none rounded-l text-black"
             value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setError(null);
-            }}
+            onChange={e => { setSearchQuery(e.target.value); setError(null); }}
           />
-          <button className="px-4 py-2 bg-gray-300 rounded-r-md text-black" type="submit">
-            Add
-          </button>
+          <button className="px-4 bg-gray-300 rounded-r" type="submit">Add</button>
         </form>
+        {/* Show suggestions dropdown */}
         {suggestions.length > 0 && (
-          <div className="absolute bg-white border border-gray-300 rounded-md w-full top-12 z-10 max-h-60 overflow-y-auto text-black">
-            {suggestions.map((sugg) => (
+          <div className="absolute bg-white border rounded w-full top-12 z-10 max-h-60 overflow-y-auto text-black">
+            {suggestions.map(sugg => (
               <div
                 key={sugg}
-                className="p-2 cursor-pointer hover:bg-gray-200"
+                className="p-2 hover:bg-gray-200 cursor-pointer"
                 onClick={() => addTicker(sugg)}
-              >
-                {sugg}
-              </div>
+              >{sugg}</div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Error */}
+      {/* Error message */}
       {error && <div className="text-red-500">{error}</div>}
 
-      {/* Selected Tickers */}
+      {/* Show selected tickers with remove buttons */}
       {selectedTickers.length > 0 && (
-        <div className="flex flex-wrap gap-2 text-black">
-          {selectedTickers.map((t) => (
-            <div key={t} className="bg-gray-200 px-2 py-1 rounded-md flex items-center">
+        <div className="flex flex-wrap gap-2">
+          {selectedTickers.map(t => (
+            <div key={t} className="bg-gray-200 px-2 py-1 rounded flex items-center">
               {t}
-              <button className="ml-2 text-red-600 font-bold" onClick={() => removeTicker(t)}>
-                x
-              </button>
+              <button className="ml-2 text-red-600 font-bold" onClick={() => removeTicker(t)}>x</button>
             </div>
           ))}
         </div>
       )}
 
-      {/* Timeframe Buttons */}
-      <div className="flex gap-2 mb-2 text-black">
-        {timeframes.map((tf) => (
+      {/* Timeframe buttons */}
+      <div className="flex gap-2 mb-2">
+        {timeframes.map(tf => (
           <button
             key={tf.value}
-            className={`px-3 py-1 rounded-md ${
-              timeframe === tf.value ? "bg-secondary" : "bg-accent"
-            }`}
+            className={`px-3 py-1 rounded ${timeframe===tf.value? 'bg-secondary':'bg-accent'}`} 
             onClick={() => setTimeframe(tf.value)}
-          >
-            {tf.label}
-          </button>
+          >{tf.label}</button>
         ))}
       </div>
 
-      {/* Loading */}
-      {loading && <p className="text-black">Loading...</p>}
+      {/* Loading indicator */}
+      {loading && <p>Loading...</p>}
 
-      {/* Chart */}
-      {selectedTickers.length === 0 && (
-        <p className="text-gray-700">No tickers added yet.</p>
-      )}
-      {selectedTickers.length > 0 && standardizedData.length > 0 && (
+      {/* Chart or prompt when no tickers */}
+      {selectedTickers.length===0 && <p>No tickers added yet.</p>}
+      {selectedTickers.length>0 && standardizedData.length>0 && (
         <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={standardizedData} className="text-black">
+          <LineChart data={standardizedData}>
             <XAxis
               dataKey="date"
               tick={{ fill: "black" }}
-              tickFormatter={(tick) => {
-                const d = new Date(tick);
-                const month = d.getMonth() + 1;
-                const day = d.getDate();
-                return `${month}/${day}`;
+              tickFormatter={tick => {
+                const d=new Date(tick);
+                return `${d.getMonth()+1}/${d.getDate()}`;
               }}
             />
-            <YAxis
-              tick={false}
-              axisLine={false}
-              tickLine={false}
-              domain={[yMin - 5, yMax + 5]}
-            />
-            <Tooltip
-              contentStyle={{ backgroundColor: "#ffffff", color: "#000000" }}
-              itemStyle={{ color: "#000000" }}
-              labelStyle={{ color: "#000000" }}
-            />
-            {selectedTickers.map((ticker) => (
+            <YAxis domain={[yMin-5, yMax+5]} hide axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ backgroundColor: "#fff" }} />
+            {selectedTickers.map(t => (
               <Line
-                key={ticker}
-                type="linear"
-                dataKey={ticker}
-                stroke={tickerColors[ticker] || "#000000"}
+                key={t}
+                dataKey={t}
+                stroke={tickerColors[t]||"#000"}
                 strokeWidth={2}
                 dot={false}
               />
@@ -448,44 +390,29 @@ export default function MultiStockSearchChart() {
         </ResponsiveContainer>
       )}
 
-      {/* Legend & Correlations */}
-      {selectedTickers.length > 0 && standardizedData.length > 0 && (
-        <div className="mt-4 flex flex-col gap-4 text-black">
-          {/* Legend: net % change */}
+      {/* Legend with net % change */}
+      {selectedTickers.length>0 && standardizedData.length>0 && (
+        <div className="mt-4 flex flex-col gap-4">
           <div>
-            <h3 className="text-xl font-bold">Stocks</h3>
-            <ul className="flex flex-wrap gap-4">
-              {selectedTickers.map((ticker) => {
-                const color = tickerColors[ticker] || "#000";
-                const pct = (percentageChanges[ticker] ?? 0).toFixed(2);
-                return (
-                  <li key={ticker} className="flex items-center gap-2">
-                    <div style={{ width: 20, height: 4, backgroundColor: color }}/>
-                    <span>{ticker} ({pct}%)</span>
-                  </li>
-                );
-              })}
-            </ul>-
+            <h3 className="font-bold">Stocks</h3>
+            <ul className="flex gap-4">
+              {selectedTickers.map(t => (
+                <li key={t} className="flex items-center gap-2">
+                  <div style={{width:20,height:4,backgroundColor:tickerColors[t]}} />
+                  <span>{t} ({percentageChanges[t]?.toFixed(2)}%)</span>
+                </li>
+              ))}
+            </ul>
           </div>
-
-          {/* Pairwise correlations */}
-          {selectedTickers.length > 1 && (
+          {/* Pairwise correlations list */}
+          {Object.keys(pairwiseCorr).length>0 && (
             <div>
-              <h3 className="text-xl font-bold">Pairwise Correlations</h3>
-              {Object.keys(pairwiseCorr).length === 0 ? (
-                <p className="text-black">No correlation data (need at least 2 days in timeframe).</p>
-              ) : (
-                <ul className="flex flex-col gap-1">
-                  {Object.entries(pairwiseCorr)
-                    .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-                    .map(([pair, corr]) => (
-                      <li key={pair}>
-                        {pair}: {corr.toFixed(2)}
-                      </li>
-                    ))
-                  }
-                </ul>
-              )}
+              <h3 className="font-bold">Pairwise Correlations</h3>
+              <ul>
+                {Object.entries(pairwiseCorr).map(([pair, corr]) => (
+                  <li key={pair}>{pair}: {corr.toFixed(2)}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
