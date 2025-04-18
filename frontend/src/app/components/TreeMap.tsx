@@ -1,11 +1,13 @@
 import React from "react";
 
+// Shape of each stock item
 interface Stock {
     symbol: string;
     marketCap: number;
     change: number;
 }
 
+// Treemap node extends Stock with layout coordinates and size
 interface TreemapNode extends Stock {
     x: number;
     y: number;
@@ -13,7 +15,7 @@ interface TreemapNode extends Stock {
     height: number;
 }
 
-// Compute Treemap Layout
+// Recursive function to compute treemap layout by splitting items
 function computeTreemap(
     items: Stock[],
     x: number,
@@ -22,22 +24,18 @@ function computeTreemap(
     height: number,
     vertical: boolean
 ): TreemapNode[] {
+    // Base case: no items
     if (items.length === 0) return [];
+    // Single item fills the area
     if (items.length === 1) {
-        return [
-            {
-                ...items[0],
-                x,
-                y,
-                width,
-                height,
-            },
-        ];
+        return [{ ...items[0], x, y, width, height }];
     }
 
+    // Sum total market cap
     const totalCap = items.reduce((sum, item) => sum + item.marketCap, 0);
-    let sum = 0,
-        splitIndex = 0;
+    // Find index to split items into two groups of roughly equal cap
+    let sum = 0;
+    let splitIndex = 0;
     for (let i = 0; i < items.length; i++) {
         sum += items[i].marketCap;
         if (sum >= totalCap / 2) {
@@ -46,102 +44,104 @@ function computeTreemap(
         }
     }
 
+    // Divide items into two groups
     const group1 = items.slice(0, splitIndex + 1);
     const group2 = items.slice(splitIndex + 1);
-    const group1Cap = group1.reduce((sum, item) => sum + item.marketCap, 0);
-    const group2Cap = group2.reduce((sum, item) => sum + item.marketCap, 0);
+    // Sum caps for each group
+    const group1Cap = group1.reduce((s, item) => s + item.marketCap, 0);
+    const group2Cap = group2.reduce((s, item) => s + item.marketCap, 0);
 
     let layout: TreemapNode[] = [];
-
     if (vertical) {
+        // Split area vertically: group1 left, group2 right
         const width1 = width * (group1Cap / totalCap);
-        const layout1 = computeTreemap(group1, x, y, width1, height, !vertical);
-        const layout2 = computeTreemap(group2, x + width1, y, width - width1, height, !vertical);
-        layout = [...layout1, ...layout2];
+        layout = [
+            ...computeTreemap(group1, x, y, width1, height, !vertical),
+            ...computeTreemap(group2, x + width1, y, width - width1, height, !vertical)
+        ];
     } else {
+        // Split area horizontally: group1 top, group2 bottom
         const height1 = height * (group1Cap / totalCap);
-        const layout1 = computeTreemap(group1, x, y, width, height1, !vertical);
-        const layout2 = computeTreemap(group2, x, y + height1, width, height - height1, !vertical);
-        layout = [...layout1, ...layout2];
+        layout = [
+            ...computeTreemap(group1, x, y, width, height1, !vertical),
+            ...computeTreemap(group2, x, y + height1, width, height - height1, !vertical)
+        ];
     }
-
     return layout;
 }
 
-// Adjust font size based on square size
-const getAdjustedFontSize = (squareWidth: number, squareHeight: number, text: string) => {
-    const baseSize = Math.max(8, Math.min(squareWidth, squareHeight) / 4);
-    const maxByWidth = squareWidth / (text.length * 0.6);
-    const maxByHeight = squareHeight / 2;
+// Determine font size that fits within a treemap cell
+const getAdjustedFontSize = (cellWidth: number, cellHeight: number, text: string) => {
+    // Base size is a quarter of the smaller dimension, min 8px
+    const baseSize = Math.max(8, Math.min(cellWidth, cellHeight) / 4);
+    // Don't exceed width or half the height
+    const maxByWidth = cellWidth / (text.length * 0.6);
+    const maxByHeight = cellHeight / 2;
     return Math.min(baseSize, maxByWidth, maxByHeight);
 };
 
+// Props: list of stocks plus optional canvas size
 interface TreemapProps {
     stocks: Stock[];
     width?: number;
     height?: number;
 }
 
+// Main Treemap component
 const Treemap: React.FC<TreemapProps> = ({ stocks, width = 600, height = 480 }) => {
-
+    // Sort stocks by market cap descending
     const sortedStocks = [...stocks].sort((a, b) => b.marketCap - a.marketCap);
-    
+    // Compute layout, toggling split direction based on aspect ratio
     const layout = computeTreemap(sortedStocks, 0, 0, width, height, width >= height);
 
-
+    // Choose background color based on percent change
     const getGradientColor = (change: number) => {
-        // Cap the percentage change at 5% to ensure we are within the range of 5 colors
-        const cappedChange = Math.min(5, Math.max(-5, change));
-        
-        let color: string;
-        
-        if (cappedChange >= 0) {
-            // Assign color based on the percentage change (brighter green shades)
-            if (cappedChange >= 2.5) color = "#008000"; // Bright green (strong positive)
-            else if (cappedChange >= 2) color = "#43a047"; // Bright medium green (good positive)
-            else if (cappedChange >= 1.5) color = "#66bb6a"; // Lively green (moderate positive)
-            else if (cappedChange >= 0.5) color = "#81c784"; // Fresh light green (small positive)
-            else color = "#a5d6a7"; // Very light green (minimal positive)
+        const capped = Math.max(-5, Math.min(5, change));
+        if (capped >= 0) {
+            if (capped >= 2.5) return "#008000";
+            if (capped >= 2)   return "#43a047";
+            if (capped >= 1.5) return "#66bb6a";
+            if (capped >= 0.5) return "#81c784";
+            return "#a5d6a7";
         } else {
-            // Handle negative (red) change values
-            if (cappedChange <= -2.5) color = "#e53935"; // Bright red (strong negative)
-            else if (cappedChange <= -2) color = "#f44336"; // Vivid red (bad negative)
-            else if (cappedChange <= -1.5) color = "#ef5350"; // Strong red (moderate negative)
-            else if (cappedChange <= -0.5) color = "#ff7043"; // Lively red (small negative)
-            else color = "#ff8a65"; // Light red (very small negative)
+            if (capped <= -2.5) return "#e53935";
+            if (capped <= -2)   return "#f44336";
+            if (capped <= -1.5) return "#ef5350";
+            if (capped <= -0.5) return "#ff7043";
+            return "#ff8a65";
         }
-
-        return color;
     };
 
     return (
         <div
-            className="relative bg-transparent rounded-lg mx-auto h-full w-full"
+            className="relative mx-auto"
             style={{ width: `${width}px`, height: `${height}px` }}
         >
-            {layout.map((item, index) => {
-                const symbolFontSize = getAdjustedFontSize(item.width, item.height, item.symbol);
-                const percentText = `${item.change}%`;
-                const percentFontSize = getAdjustedFontSize(item.width, item.height, percentText);
+            {layout.map((node, idx) => {
+                // Compute font sizes for symbol and percent
+                const symbolSize = getAdjustedFontSize(node.width, node.height, node.symbol);
+                const percent = `${node.change}%`;
+                const percentSize = getAdjustedFontSize(node.width, node.height, percent);
 
                 return (
                     <div
-                        key={index}
-                        className="absolute flex flex-col items-center justify-center text-black font-mono border border-gray-600 p-1 text-gray-800 "
+                        key={idx}
+                        className="absolute flex flex-col items-center justify-center font-mono text-black border border-gray-600"
                         style={{
-                            width: `${item.width}px`,
-                            height: `${item.height}px`,
-                            left: `${item.x}px`,
-                            top: `${item.y}px`,
-                            // Apply the gradient based on the percentage change
-                            background: getGradientColor(item.change),
+                            left: `${node.x}px`,
+                            top: `${node.y}px`,
+                            width: `${node.width}px`,
+                            height: `${node.height}px`,
+                            background: getGradientColor(node.change)
                         }}
                     >
-                        <span className="w-full text-center" style={{ fontSize: `${symbolFontSize}px`, lineHeight: 1.2 }}>
-                            {item.symbol}
+                        {/* Stock symbol */}
+                        <span style={{ fontSize: `${symbolSize}px`, lineHeight: 1.2 }}>
+                            {node.symbol}
                         </span>
-                        <span className="w-full text-center" style={{ fontSize: `${percentFontSize}px`, lineHeight: 1.2 }}>
-                            {percentText}
+                        {/* Percent change */}
+                        <span style={{ fontSize: `${percentSize}px`, lineHeight: 1.2 }}>
+                            {percent}
                         </span>
                     </div>
                 );
